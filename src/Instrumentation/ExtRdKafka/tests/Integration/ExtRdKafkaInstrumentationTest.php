@@ -105,7 +105,7 @@ class ExtRdKafkaInstrumentationTest extends TestCase
     {
         $conf = new Conf();
         $producer = new Producer($conf);
-        $producer->addBrokers('kafka:9092');
+        $producer->addBrokers(getenv('KAFKA_HOST') ?: 'localhost' . ':9092');
 
         $topic = $producer->newTopic('test');
 
@@ -139,7 +139,7 @@ class ExtRdKafkaInstrumentationTest extends TestCase
         });
 
         $conf->set('group.id', 'myConsumerGroup');
-        $conf->set('metadata.broker.list', getenv('KAFKA_HOST') ?: 'kafka' . ':9092');
+        $conf->set('metadata.broker.list', getenv('KAFKA_HOST') ?: 'localhost' . ':9092');
         $conf->set('auto.offset.reset', 'earliest');
         $conf->set('enable.partition.eof', 'true');
 
