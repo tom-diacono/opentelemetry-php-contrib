@@ -17,6 +17,7 @@ use OpenTelemetry\SemConv\TraceAttributes;
 use Psr\Http\Message\RequestInterface;
 use SoapClient;
 
+use SoapFault;
 use Throwable;
 
 use function OpenTelemetry\Instrumentation\hook;
@@ -47,17 +48,17 @@ final class ExtSoapInstrumentation
 //                $propagator = Globals::propagator();
                 $parentContext = Context::getCurrent();
 
+                var_dump($params);
+
                 /** @psalm-suppress ArgumentTypeCoercion */
                 $spanBuilder = $instrumentation
                     ->tracer()
                     ->spanBuilder(sprintf('%s', $params[0] ?? null))
                     ->setParent($parentContext)
                     ->setSpanKind(SpanKind::KIND_CLIENT)
-//                    ->setAttribute(TraceAttributes::URL_FULL, (string) $request->getUri())
+                    // TODO- Work out below, it'll work in WSDL mode
+                    ->setAttribute(TraceAttributes::URL_FULL, (string) $client->_get('location'))
 //                    ->setAttribute(TraceAttributes::HTTP_REQUEST_METHOD, $request->getMethod())
-//                    ->setAttribute(TraceAttributes::NETWORK_PROTOCOL_VERSION, $request->getProtocolVersion())
-//                    ->setAttribute(TraceAttributes::USER_AGENT_ORIGINAL, $request->getHeaderLine('User-Agent'))
-//                    ->setAttribute(TraceAttributes::HTTP_REQUEST_BODY_SIZE, $request->getHeaderLine('Content-Length'))
 //                    ->setAttribute(TraceAttributes::SERVER_ADDRESS, $request->getUri()->getHost())
 //                    ->setAttribute(TraceAttributes::SERVER_PORT, $request->getUri()->getPort())
                     ->setAttribute(TraceAttributes::CODE_FUNCTION, $function)
@@ -89,7 +90,7 @@ final class ExtSoapInstrumentation
                 return $params;
             },
             post: function (
-                SoapClient $class,
+                SoapClient $client,
                 array $params,
                 $returnValue,
                 ?Throwable $exception
@@ -97,37 +98,38 @@ final class ExtSoapInstrumentation
                 $scope = Context::storage()->scope();
                 $scope?->detach();
 
-                //@todo do we need the second part of this 'or'?
                 if (!$scope || $scope->context() === Context::getCurrent()) {
                     return;
                 }
 
                 $span = Span::fromContext($scope->context());
 
-//                if ($response) {
-//                    $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $response->getStatusCode());
-//                    $span->setAttribute(TraceAttributes::NETWORK_PROTOCOL_VERSION, $response->getProtocolVersion());
-//                    $span->setAttribute(TraceAttributes::HTTP_RESPONSE_BODY_SIZE, $response->getHeaderLine('Content-Length'));
-//
-//                    foreach ((array) (get_cfg_var('otel.instrumentation.http.response_headers') ?: []) as $header) {
-//                        if ($response->hasHeader($header)) {
-//                            /** @psalm-suppress ArgumentTypeCoercion */
-//                            $span->setAttribute(sprintf('http.response.header.%s', strtolower($header)), $response->getHeader($header));
-//                        }
-//                    }
-//                    if ($response->getStatusCode() >= 400 && $response->getStatusCode() < 600) {
-//                        $span->setStatus(StatusCode::STATUS_ERROR);
-//                    }
-//                }
+                $responseCode = self::extractHttpResponseFromResponseHeaders($client);
+                $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $responseCode);
+
+                if ($responseCode >= 400 && $responseCode < 600) {
+                    $span->setStatus(StatusCode::STATUS_ERROR);
+                }
+
                 if ($exception) {
                     $span->recordException($exception, [TraceAttributes::EXCEPTION_ESCAPED => true]);
                     $span->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
                 }
 
-                var_dump($returnValue);
-
                 $span->end();
             }
         );
+    }
+
+    private static function extractHttpResponseFromResponseHeaders(SoapClient $client): ?int
+    {
+        $headers = $client->__getLastResponseHeaders();
+
+        // Extract the HTTP status code from the headers
+        if (preg_match('/HTTP\/\d\.\d\s+(\d+)/', $headers, $matches)) {
+            return (int) $matches[1];
+        } else {
+            return null;
+        }
     }
 }
