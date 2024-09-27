@@ -13,8 +13,10 @@ use OpenTelemetry\SDK\Trace\SpanExporter\InMemoryExporter;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SemConv\TraceAttributes;
+use OpenTelemetry\Tests\Instrumentation\ExtSoap\tests\MockSoapClient;
 use PHPUnit\Framework\TestCase;
 use Psalm\Issue\Trace;
+use ReflectionClass;
 use SoapClient;
 use SoapFault;
 
@@ -33,7 +35,6 @@ class ExtSoapInstrumentationTest extends TestCase
                 new InMemoryExporter($this->storage)
             )
         );
-        $this->client = $this->createMock(SoapClient::class);
 
         $this->scope = Configurator::create()
             ->withTracerProvider($this->tracerProvider)
@@ -52,19 +53,14 @@ class ExtSoapInstrumentationTest extends TestCase
      */
     public function test_send_request(string $method, string $uri, int $statusCode): void
     {
-        $this->markTestSkipped('This does actually work');
         $this->assertCount(0, $this->storage);
-        $this->client
-            ->expects($this->once())
-            ->method('__soapCall')
-//            ->with($this->callback(function (RequestInterface $request) {
-//                $this->assertTrue($request->hasHeader('traceparent'), 'traceparent has been injected into request');
-//                $this->assertNotNull($request->getHeaderLine('traceparent'));
-//
-//                return true;
-//            }))
-            ->willReturn('SomeData');
 
+        $this->client = MockSoapClient::getFakeSoapClient('http://www.dneonline.com/calculator.asmx?wsdl', [
+            'trace' => 1,
+            'exception' => 1,
+            'location' => $uri,
+            'cache_wsdl' => WSDL_CACHE_NONE,
+        ]);
         $this->client->__soapCall('SomeMethod', ['Arg1', 'Arg2']);
 
         $this->assertCount(1, $this->storage);
@@ -72,9 +68,9 @@ class ExtSoapInstrumentationTest extends TestCase
         /** @var ImmutableSpan $span */
         $span = $this->storage[0];
 
-        $this->assertStringContainsString($method, $span->getName());
-//        $this->assertTrue($span->getAttributes()->has(TraceAttributes::URL_FULL));
-//        $this->assertSame($uri, $span->getAttributes()->get(TraceAttributes::URL_FULL));
+        $this->assertStringContainsString('SomeMethod', $span->getName());
+        $this->assertTrue($span->getAttributes()->has(TraceAttributes::URL_FULL));
+        $this->assertSame($uri, $span->getAttributes()->get(TraceAttributes::URL_FULL));
 //        $this->assertTrue($span->getAttributes()->has(TraceAttributes::HTTP_REQUEST_METHOD));
 //        $this->assertSame($method, $span->getAttributes()->get(TraceAttributes::HTTP_REQUEST_METHOD));
 //        $this->assertTrue($span->getAttributes()->has(TraceAttributes::HTTP_RESPONSE_STATUS_CODE));
@@ -83,16 +79,8 @@ class ExtSoapInstrumentationTest extends TestCase
 
     public function test_send_request_real_api(): void
     {
+        $this->markTestSkipped('skip');
         $this->assertCount(0, $this->storage);
-        $api = new SoapClient(
-        'http://www.dneonline.com/calculator.asmx?wsdl',
-            [
-                'trace' => 1,
-                'exception' => 1,
-                'location' => 'http://www.dneonline.com/calculator.asmx',
-                'cache_wsdl' => WSDL_CACHE_NONE,
-            ]
-        );
 
         $data = <<<XML
 
@@ -127,7 +115,7 @@ XML;
     public function requestProvider(): array
     {
         return [
-            ['GET', 'http://example.com/foo', 200],
+            ['POST', 'http://example.com/foo', 200],
             ['POST', 'https://example.com/bar', 401],
         ];
     }
